@@ -1,0 +1,351 @@
+-- Susano Menu - Complete FiveM Overlay Menu (Single .lua File)
+-- Uses full Susano API with modern UI, mouse support, ESP, submenus, and more.
+-- Toggle: INSERT key | Navigate: Arrows / Mouse | Select: Enter / Left Click
+
+local menu = {
+    open = false,
+    selected_tab = 1,
+    selected_opt = 1,
+    active_pane = "sidebar",
+    stack = {},
+    esp = { enabled = false },
+    fonts = {},
+    textures = {},
+}
+
+-- Virtual Key Codes
+local VK = {
+    INSERT = 0x2D, UP = 0x26, DOWN = 0x28, LEFT = 0x25, RIGHT = 0x27,
+    ENTER = 0x0D, BACK = 0x08, LMB = 0x01
+}
+
+-- Menu Structure
+menu.tabs = {
+    { name = "Home", options = {
+        { name = "Welcome to Susano", action = function() print("^2[Susano] Welcome!") end },
+        { name = "Version: VI BETA", action = function() end },
+    }},
+    { name = "Player", options = {
+        { name = "Spoof MP Male", action = function()
+            local ok = Susano.SpoofPed(GetHashKey("mp_m_freemode_01"), true)
+            print(ok and "^2Spoofed as MP Male" or "^1Spoof failed")
+        end},
+        { name = "Spoof MP Female", action = function()
+            local ok = Susano.SpoofPed(GetHashKey("mp_f_freemode_01"), true)
+            print(ok and "^2Spoofed as MP Female" or "^1Spoof failed")
+        end},
+        { name = "Disable Spoof", action = function()
+            Susano.SpoofPed(0, false)
+            print("^3Spoof disabled")
+        end},
+        { name = "Check Invisibility", action = function()
+            local inv = Susano.IsPlayerInvisible(PlayerId())
+            print(inv and "^5You are invisible" or "^6You are visible")
+        end},
+        { name = "Ragdoll Self", action = function()
+            local ped = PlayerPedId()
+            local guid = GetEntityGuid(ped)
+            Susano.RequestRagdoll(guid)
+        end},
+    }},
+    { name = "Server", options = {
+        { name = "List All Events", action = function()
+            local events = Susano.GetAllEvent()
+            for _, e in ipairs(events) do
+                print(string.format("[%s] %s", e.resource, e.event))
+            end
+        end},
+        { name = "Find Event: esx_", action = function()
+            local res = Susano.FindEvent("esx_", false)
+            for _, r in ipairs(res) do print(r.resource .. "::" .. r.event) end
+        end},
+        { name = "Hook Server Events", action = function()
+            Susano.OnTriggerServerEvent(function(name, payload)
+                print(string.format("^3[EVENT] %s", name))
+                return name, payload
+            end)
+            print("^2Server events hooked")
+        end},
+        { name = "Clear Hook", action = function()
+            Susano.ClearOnTriggerServerEvent()
+            print("^1Hook cleared")
+        end},
+    }},
+    { name = "Weapon", options = {
+        { name = "No Features Yet", action = function() print("^3Coming soon...") end },
+    }},
+    { name = "Combat", options = {
+        { name = "Spawn Armored Ped", action = function()
+            local hash = GetHashKey("s_m_m_armoured_01")
+            RequestModel(hash)
+            while not HasModelLoaded(hash) do Citizen.Wait(0) end
+            local ped = PlayerPedId()
+            local x, y, z = table.unpack(GetEntityCoords(ped))
+            local h = GetEntityHeading(ped)
+            local p = Susano.CreateSpoofedPed(26, hash, x + 2.0, y, z, h, true, true)
+            SetModelAsNoLongerNeeded(hash)
+            print(p ~= 0 and "^2Ped spawned" or "^1Spawn failed")
+        end},
+        { name = "Ragdoll Nearby", action = function()
+            local me = PlayerPedId()
+            local coords = GetEntityCoords(me)
+            for ped in EnumeratePeds() do
+                if DoesEntityExist(ped) and ped ~= me and #(coords - GetEntityCoords(ped)) < 10.0 then
+                    Susano.RequestRagdoll(GetEntityGuid(ped))
+                end
+            end
+        end},
+    }},
+    { name = "Vehicle", options = {
+        { name = "Spawn Vehicle", type = "submenu", submenu = function()
+            local models = Susano.GetAllVehiclesModel()
+            local opts = {}
+            for i = 1, math.min(150, #models) do
+                local m = models[i]
+                table.insert(opts, {
+                    name = m.name,
+                    action = function()
+                        local hash = m.hash
+                        RequestModel(hash)
+                        while not HasModelLoaded(hash) do Citizen.Wait(0) end
+                        local ped = PlayerPedId()
+                        local x, y, z = table.unpack(GetEntityCoords(ped))
+                        local h = GetEntityHeading(ped)
+                        local dx = -math.sin(math.rad(h)) * 6.0
+                        local dy = math.cos(math.rad(h)) * 6.0
+                        local veh = Susano.CreateSpoofedVehicle(hash, x + dx, y + dy, z, h, true, true, false)
+                        SetModelAsNoLongerNeeded(hash)
+                        print(veh ~= 0 and "^2" .. m.name .. " spawned" or "^1Spawn failed")
+                    end
+                })
+            end
+            return opts
+        end},
+    }},
+    { name = "Visual", options = {
+        { name = "Toggle ESP", action = function()
+            menu.esp.enabled = not menu.esp.enabled
+            print(menu.esp.enabled and "^2ESP ON" or "^1ESP OFF")
+        end},
+        { name = "Draw Test Circle", action = function()
+            menu.test_circle = { x = 960, y = 540, r = 100 }
+        end},
+    }},
+    { name = "Misc", options = {
+        { name = "HTTP GET", action = function()
+            local s, b = Susano.HttpGet("https://httpbin.org/get")
+            print(s and ("^2GET: " .. s .. " (" .. #b .. " bytes)") or ("^1GET failed: " .. b))
+        end},
+        { name = "HTTP POST", action = function()
+            local s, b = Susano.HttpPost("https://httpbin.org/post", '{"susano":"hello"}')
+            print(s and ("^2POST: " .. s) or ("^1POST failed: " .. b))
+        end},
+        { name = "Copy to Clipboard", action = function()
+            local ok, err = Susano.CopyToClipboard("Susano Menu @ " .. os.date())
+            print(ok and "^2Copied!" or "^1Error: " .. err)
+        end},
+        { name = "Inject into 'any'", action = function()
+            Susano.InjectResource("any", [[print("^3[Susano] Injected into " .. GetCurrentResourceName())]])
+        end},
+    }},
+    { name = "Settings", options = {
+        { name = "Load Font (Arial)", action = function()
+            local id, err = Susano.LoadFont("C:/Windows/Fonts/arial.ttf", 18)
+            if id then
+                menu.fonts.default = id
+                print("^2Font loaded: ID " .. id)
+            else
+                print("^1Font error: " .. err)
+            end
+        end},
+        { name = "Load Logo Texture", action = function()
+            local w, h, id = Susano.LoadTexture("logo.png")  -- Place logo.png in resource root
+            if id then
+                menu.textures.logo = { id = id, w = w, h = h }
+                print("^2Logo loaded: " .. w .. "x" .. h)
+            end
+        end},
+    }},
+}
+
+-- Helper: Enumerate peds
+function EnumeratePeds()
+    return coroutine.wrap(function()
+        for ped in pairs(GetGamePool('CPed')) do
+            coroutine.yield(ped)
+        end
+    end)
+end
+
+-- Main Thread
+Citizen.CreateThread(function()
+    -- Load default font
+    local fid, ferr = Susano.LoadFont("C:/Windows/Fonts/arial.ttf", 18)
+    if fid then menu.fonts.default = fid end
+
+    while true do
+        local wait = menu.open and 0 or 100
+        Citizen.Wait(wait)
+
+        if Susano.GetAsyncKeyState(VK.INSERT)[2] then
+            menu.open = not menu.open
+            Susano.EnableOverlay(menu.open)
+            if menu.open then
+                menu.selected_tab = 1
+                menu.selected_opt = 1
+                menu.active_pane = "sidebar"
+            end
+        end
+
+        if not menu.open then goto continue end
+
+        Susano.BeginFrame()
+
+        local sw, sh = GetActiveScreenResolution()
+        local sidebar_w = 260
+        local header_h = 90
+        local item_h = 48
+        local pad = 12
+
+        -- Colors (R,G,B,A in 0..1)
+        local col = {
+            bg = {0.08, 0.08, 0.12, 0.95},
+            header = {0.15, 0.0, 0.0, 0.9},
+            sidebar = {0.05, 0.0, 0.0, 0.95},
+            sel = {0.3, 0.0, 0.0, 0.8},
+            text = {1.0, 1.0, 1.0, 1.0},
+            accent = {1.0, 0.2, 0.2, 1.0},
+        }
+
+        -- Header
+        Susano.DrawRectFilled(0, 0, sw, header_h, col.header[1], col.header[2], col.header[3], col.header[4])
+        if menu.textures.logo then
+            local tex = menu.textures.logo
+            Susano.DrawImage(tex.id, pad, pad, 60, 60)
+        end
+        Susano.DrawText(pad + 70, 28, "SUSANO MENU", 36, col.accent[1], col.accent[2], col.accent[3], col.accent[4])
+
+        -- Sidebar
+        Susano.DrawRectFilled(0, header_h, sidebar_w, sh - header_h, col.sidebar[1], col.sidebar[2], col.sidebar[3], col.sidebar[4])
+        for i, tab in ipairs(menu.tabs) do
+            local y = header_h + (i - 1) * item_h
+            if i == menu.selected_tab then
+                Susano.DrawRectFilled(0, y, sidebar_w, item_h, col.sel[1], col.sel[2], col.sel[3], col.sel[4])
+                if menu.active_pane == "sidebar" then
+                    Susano.DrawRect(0, y, sidebar_w, item_h, col.accent[1], col.accent[2], col.accent[3], col.accent[4], 2)
+                end
+            end
+            Susano.DrawText(pad, y + 14, tab.name, 22, col.text[1], col.text[2], col.text[3], col.text[4])
+        end
+
+        -- Main Content
+        local opts = #menu.stack > 0 and menu.current_opts or menu.tabs[menu.selected_tab].options
+        local visible = math.floor((sh - header_h) / item_h)
+        local offset = math.max(0, menu.selected_opt - math.floor(visible / 2))
+        offset = math.min(offset, #opts - visible)
+
+        Susano.DrawRectFilled(sidebar_w, header_h, sw - sidebar_w, sh - header_h, col.bg[1], col.bg[2], col.bg[3], col.bg[4])
+        for i = 1, visible do
+            local idx = i + offset
+            if not opts[idx] then break end
+            local y = header_h + (i - 1) * item_h
+            local opt = opts[idx]
+            local is_sel = (idx == menu.selected_opt and menu.active_pane == "main")
+            if is_sel then
+                Susano.DrawRectFilled(sidebar_w, y, sw - sidebar_w, item_h, col.sel[1], col.sel[2], col.sel[3], 0.7)
+            end
+            Susano.DrawText(sidebar_w + pad, y + 14, opt.name, 20, col.text[1], col.text[2], col.text[3], col.text[4])
+            if opt.type == "submenu" then
+                Susano.DrawText(sw - 40, y + 14, ">", 20, 0.7, 0.7, 0.7, 1.0)
+            end
+        end
+
+        -- Footer
+        local page = math.ceil(menu.selected_opt / visible)
+        local pages = math.ceil(#opts / visible)
+        Susano.DrawText(pad, sh - 30, "VI BETA | Susano User", 16, 0.7, 0.7, 0.7, 1.0)
+        Susano.DrawText(sw - 80, sh - 30, page .. "/" .. pages, 16, 0.7, 0.7, 0.7, 1.0)
+
+        -- Mouse Input
+        local mouse_x, mouse_y = Susano.GetCursorPos().x, Susano.GetCursorPos().y
+        local lmb_down, lmb_pressed = Susano.GetAsyncKeyState(VK.LMB)
+
+        -- Navigation
+        local function nav_up() menu.selected_opt = menu.selected_opt - 1; if menu.selected_opt < 1 then menu.selected_opt = #opts end end
+        local function nav_down() menu.selected_opt = menu.selected_opt + 1; if menu.selected_opt > #opts then menu.selected_opt = 1 end end
+
+        if menu.active_pane == "sidebar" then
+            if Susano.GetAsyncKeyState(VK.UP)[2] then menu.selected_tab = (menu.selected_tab - 2) % #menu.tabs + 1 end
+            if Susano.GetAsyncKeyState(VK.DOWN)[2] then menu.selected_tab = menu.selected_tab % #menu.tabs + 1 end
+            if Susano.GetAsyncKeyState(VK.RIGHT)[2] or Susano.GetAsyncKeyState(VK.ENTER)[2] then
+                menu.active_pane = "main"
+                menu.selected_opt = 1
+            end
+        else
+            if Susano.GetAsyncKeyState(VK.UP)[2] then nav_up() end
+            if Susano.GetAsyncKeyState(VK.DOWN)[2] then nav_down() end
+            if Susano.GetAsyncKeyState(VK.LEFT)[2] or Susano.GetAsyncKeyState(VK.BACK)[2] then
+                if #menu.stack > 0 then
+                    local prev = table.remove(menu.stack)
+                    menu.selected_tab = prev.tab
+                    menu.selected_opt = prev.opt
+                    menu.active_pane = prev.pane
+                    menu.current_opts = prev.opts
+                else
+                    menu.active_pane = "sidebar"
+                end
+            end
+            if Susano.GetAsyncKeyState(VK.ENTER)[2] or (lmb_pressed and mouse_y > header_h and mouse_y < sh and mouse_x > sidebar_w) then
+                local opt = opts[menu.selected_opt]
+                if opt then
+                    if opt.action then opt.action() end
+                    if opt.type == "submenu" then
+                        table.insert(menu.stack, {
+                            tab = menu.selected_tab, opt = menu.selected_opt,
+                            pane = menu.active_pane, opts = menu.current_opts or opts
+                        })
+                        menu.current_opts = opt.submenu()
+                        menu.selected_opt = 1
+                    end
+                end
+            end
+        end
+
+        -- ESP
+        if menu.esp.enabled then
+            local cam = GetGameplayCamCoord()
+            local my_ped = PlayerPedId()
+            for ped in EnumeratePeds() do
+                if DoesEntityExist(ped) and ped ~= my_ped and not IsEntityDead(ped) then
+                    local pos = GetEntityCoords(ped)
+                    local head = GetPedBoneCoords(ped, 0x796e, 0.0, 0.0, 0.0)
+                    local ok1, sx1, sy1 = Susano.WorldToScreen(pos.x, pos.y, pos.z)
+                    local ok2, sx2, sy2 = Susano.WorldToScreen(head.x, head.y, head.z + 0.2)
+                    if ok1 and ok2 then
+                        local h = sy1 - sy2
+                        local w = h * 0.4
+                        Susano.DrawRect(sx2 - w/2, sy2, w, h, 1, 0, 0, 1, 2)
+                        Susano.DrawText(sx2 - w/2, sy2 - 20, GetPlayerName(NetworkGetPlayerIndexFromPed(ped)), 16, 1, 1, 1, 1)
+                    end
+                end
+            end
+        end
+
+        -- Test Circle
+        if menu.test_circle then
+            Susano.DrawCircle(menu.test_circle.x, menu.test_circle.y, menu.test_circle.r, false, 0, 1, 1, 1, 3)
+            menu.test_circle.r = menu.test_circle.r + 1
+            if menu.test_circle.r > 300 then menu.test_circle = nil end
+        end
+
+        Susano.SubmitFrame()
+        ::continue::
+    end
+end)
+
+-- Resource Start (Optional)
+AddEventHandler('onResourceStart', function(name)
+    if name == GetCurrentResourceName() then
+        print("^2[SUSANO MENU] Loaded - Press INSERT to toggle")
+    end
+end)
